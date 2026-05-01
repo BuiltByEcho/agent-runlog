@@ -1,0 +1,43 @@
+{
+  "name": "agent-runlog",
+  "version": "0.1.0",
+  "description": "Wrap agent commands and produce concise, safety-aware run logs.",
+  "type": "module",
+  "bin": {
+    "agent-runlog": "src/cli.js"
+  },
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "smoke": "node src/cli.js --out .agent-runs/smoke -- node -e \"console.log('hello from smoke')\""
+  },
+  "keywords": [
+    "ai-agent",
+    "agents",
+    "observability",
+    "cli",
+    "runlog",
+    "audit-log",
+    "developer-tools"
+  ],
+  "author": "BuiltByEcho",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BuiltByEcho/agent-runlog.git"
+  },
+  "bugs": {
+    "url": "https://github.com/BuiltByEcho/agent-runlog/issues"
+  },
+  "homepage": "https://github.com/BuiltByEcho/agent-runlog#readme",
+  "engines": {
+    "node": ">=20"
+  }
+}
