@@ -14,8 +14,8 @@ By default, logs go to `.agent-runs/<timestamp>/`:
 
 - `report.md` — human/agent readable summary
 - `run.json` — structured report for automation
-- `stdout.log` — full stdout
-- `stderr.log` — full stderr
+- `stdout.log` — stdout, redacted by default
+- `stderr.log` — stderr, redacted by default
 
 ## Install
 
@@ -41,6 +41,7 @@ Options:
 - `--cwd DIR` — working directory for the command.
 - `--quiet` / `-q` — do not mirror child output to terminal.
 - `--json` — print the final report JSON to stdout.
+- `--no-redact` — store raw stdout/stderr instead of redacted logs.
 
 Examples:
 
@@ -48,6 +49,7 @@ Examples:
 agent-runlog -- npm test
 agent-runlog -o .agent-runs/lint -- npm run lint
 agent-runlog --json -- node scripts/migrate.js > run.json
+agent-runlog --no-redact -- node scripts/debug-local.js
 ```
 
 ## Why this exists
@@ -61,6 +63,12 @@ This is useful for:
 - long-running CLI tasks
 - sub-agent harnesses
 - debugging repeated failure loops
+
+## Redaction by default
+
+Agent logs often accidentally capture API keys, bearer tokens, private keys, or `.env`-style assignments. `agent-runlog` now redacts obvious secret-looking values before writing `stdout.log`, `stderr.log`, `run.json`, and `report.md`. The original byte counts are still recorded, and the report includes redaction counts by type.
+
+If you explicitly need raw logs for a local-only debugging session, pass `--no-redact`. Be careful before sharing those logs with another agent or human.
 
 ## What it detects
 
@@ -80,6 +88,9 @@ It is not a full secret scanner or observability platform. It is a tiny portable
 import { runLogged } from 'agent-runlog';
 
 const { report, outDir } = await runLogged('npm', ['test']);
+
+// Preserve raw logs only when you really need them:
+await runLogged('node', ['debug.js'], { redact: false });
 console.log(report.analysis.summary, outDir);
 ```
 

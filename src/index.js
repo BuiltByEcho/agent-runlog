@@ -7,8 +7,9 @@ const SECRET_PATTERNS = [
   [/\bgh[pousr]_[A-Za-z0-9_]{20,}\b/g, 'GitHub token'],
   [/\bsk-[A-Za-z0-9_-]{20,}\b/g, 'OpenAI-style API key'],
   [/\bxox[baprs]-[A-Za-z0-9-]{20,}\b/g, 'Slack token'],
-  [/-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----/g, 'private key block'],
-  [/\b[A-Za-z0-9_]*(?:SECRET|TOKEN|API_KEY|PRIVATE_KEY|PASSWORD)[A-Za-z0-9_]*\s*=\s*['\"][^'\"]{8,}['\"]/gi, 'secret-looking assignment']
+  [/-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----/g, 'private key block'],
+  [/\b[A-Za-z0-9_]*(?:SECRET|TOKEN|API_KEY|PRIVATE_KEY|PASSWORD)[A-Za-z0-9_]*\s*=\s*(?:['\"][^'\"]{8,}['\"]|\\['\"][^'\"]{8,}\\['\"]|[^\s&;]{8,})/gi, 'secret-looking assignment'],
+  [/\bBearer\s+[A-Za-z0-9._~+/-]{20,}=*\b/g, 'Bearer token']
 ];
 
 export async function runLogged(command, args = [], options = {}) {
@@ -47,9 +48,17 @@ export async function runLogged(command, args = [], options = {}) {
   const after = gitSnapshot(cwd);
   const output = `${stdout}\n${stderr}`;
   const analysis = analyzeOutput(output, exit.code, endedAt - startedAt);
+  const redact = options.redact !== false;
+  const stdoutRedaction = redact ? redactSecrets(stdout) : { text: stdout, redactions: [] };
+  const stderrRedaction = redact ? redactSecrets(stderr) : { text: stderr, redactions: [] };
+  const stdoutForLogs = stdoutRedaction.text;
+  const stderrForLogs = stderrRedaction.text;
+  const commandRedactions = redact ? [command, ...args].map(value => redactSecrets(String(value))) : [];
+  const redactionStats = redact ? mergeRedactions(stdoutRedaction.redactions, stderrRedaction.redactions, ...commandRedactions.map(item => item.redactions)) : [];
+  const commandForReport = redact ? commandRedactions.map(item => item.text) : [command, ...args];
   const report = {
     runId,
-    command: [command, ...args],
+    command: commandForReport,
     cwd,
     startedAt: startedAt.toISOString(),
     endedAt: endedAt.toISOString(),
@@ -61,23 +70,41 @@ export async function runLogged(command, args = [], options = {}) {
     output: {
       stdoutBytes: Buffer.byteLength(stdout),
       stderrBytes: Buffer.byteLength(stderr),
-      stdoutTail: tail(stdout, 80),
-      stderrTail: tail(stderr, 80)
+      storedRedacted: redact,
+      redactions: redactionStats,
+      stdoutTail: tail(stdoutForLogs, 80),
+      stderrTail: tail(stderrForLogs, 80)
     },
     analysis
   };
 
-  writeFileSync(join(outDir, 'stdout.log'), stdout);
-  writeFileSync(join(outDir, 'stderr.log'), stderr);
+  writeFileSync(join(outDir, 'stdout.log'), stdoutForLogs);
+  writeFileSync(join(outDir, 'stderr.log'), stderrForLogs);
   writeFileSync(join(outDir, 'run.json'), JSON.stringify(report, null, 2));
   writeFileSync(join(outDir, 'report.md'), formatMarkdown(report));
 
   return { report, outDir };
 }
 
+export function redactSecrets(text) {
+  const redactions = [];
+  let redacted = text;
+  for (const [pattern, label] of SECRET_PATTERNS) {
+    let count = 0;
+    redacted = redacted.replace(pattern, () => {
+      count += 1;
+      return `[REDACTED: ${label}]`;
+    });
+    pattern.lastIndex = 0;
+    if (count) redactions.push({ label, count });
+  }
+  return { text: redacted, redactions };
+}
+
 export function analyzeOutput(text, exitCode = 0, durationMs = 0) {
   const findings = [];
-  const lines = text.split(/\r?\n/).filter(Boolean);
+  const safeText = redactSecrets(text).text;
+  const lines = safeText.split(/\r?\n/).filter(Boolean);
   const repeated = repeatedLines(lines);
   for (const item of repeated.slice(0, 5)) {
     findings.push({ severity: item.count >= 10 ? 'medium' : 'low', type: 'repetition', message: `Repeated line ${item.count}x: ${item.line.slice(0, 140)}` });
@@ -106,9 +133,16 @@ export function formatMarkdown(report) {
   lines.push(`- Status: **${report.analysis.status}** (exit ${report.exitCode})`);
   lines.push(`- Duration: ${formatDuration(report.durationMs)}`);
   lines.push(`- Started: ${report.startedAt}`);
+  lines.push(`- Stored logs redacted: ${report.output.storedRedacted ? 'yes' : 'no'}`);
   lines.push('');
   lines.push('## Summary');
   lines.push(report.analysis.summary);
+  lines.push('');
+  if (report.output.redactions?.length) {
+    lines.push('');
+    lines.push('## Redactions');
+    for (const item of report.output.redactions) lines.push(`- ${item.label}: ${item.count}`);
+  }
   lines.push('');
   lines.push('## Findings');
   if (report.analysis.findings.length) {
@@ -147,6 +181,14 @@ function gitSnapshot(cwd) {
 
 function git(cwd, args) {
   try { return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return ''; }
+}
+
+function mergeRedactions(...groups) {
+  const totals = new Map();
+  for (const group of groups) {
+    for (const item of group) totals.set(item.label, (totals.get(item.label) || 0) + item.count);
+  }
+  return [...totals.entries()].map(([label, count]) => ({ label, count }));
 }
 
 function repeatedLines(lines) {

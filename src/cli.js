@@ -2,7 +2,7 @@
 import { runLogged } from './index.js';
 
 function parse(argv) {
-  const args = { outDir: undefined, cwd: process.cwd(), quiet: false, printJson: false, command: [] };
+  const args = { outDir: undefined, cwd: process.cwd(), quiet: false, printJson: false, redact: true, command: [] };
   let i = 0;
   for (; i < argv.length; i++) {
     const arg = argv[i];
@@ -12,6 +12,7 @@ function parse(argv) {
     else if (arg === '--cwd') args.cwd = argv[++i];
     else if (arg === '--quiet' || arg === '-q') args.quiet = true;
     else if (arg === '--json') args.printJson = true;
+    else if (arg === '--no-redact') args.redact = false;
     else if (!arg.startsWith('-')) { args.command = argv.slice(i); break; }
     else throw new Error(`Unknown option: ${arg}`);
   }
@@ -30,6 +31,7 @@ Options:
       --cwd DIR     Working directory for command (default: current directory)
   -q, --quiet       Do not mirror child output to terminal
       --json        Print the run report JSON to stdout after completion
+      --no-redact   Store raw stdout/stderr logs instead of redacted logs
   -h, --help        Show help
 
 Examples:
@@ -47,7 +49,7 @@ try {
   }
   if (!args.command.length) throw new Error('Missing command. Use -- before the command if needed.');
   const [cmd, ...cmdArgs] = args.command;
-  const { report, outDir } = await runLogged(cmd, cmdArgs, { cwd: args.cwd, outDir: args.outDir, quiet: args.quiet || args.printJson });
+  const { report, outDir } = await runLogged(cmd, cmdArgs, { cwd: args.cwd, outDir: args.outDir, quiet: args.quiet || args.printJson, redact: args.redact });
   if (args.printJson) console.log(JSON.stringify({ outDir, ...report }, null, 2));
   else console.error(`\nagent-runlog: wrote ${outDir}/report.md`);
   process.exit(report.exitCode ?? 0);
