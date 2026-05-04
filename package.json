@@ -1,6 +1,6 @@
 {
   "name": "agent-runlog",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Wrap agent commands and produce concise, safety-aware run logs.",
   "type": "module",
   "bin": {
@@ -12,7 +12,8 @@
   "files": [
     "src",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "skills/"
   ],
   "scripts": {
     "test": "node --test",

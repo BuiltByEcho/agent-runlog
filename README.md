@@ -97,3 +97,7 @@ console.log(report.analysis.summary, outDir);
 ## License
 
 MIT
+
+## Agent Skill
+
+This package includes an OpenClaw/Claude-style skill at `skills/agent-runlog` that teaches agents when and how to wrap commands with `agent-runlog` for redacted run evidence and handoffs.
