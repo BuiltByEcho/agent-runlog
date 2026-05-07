@@ -77,3 +77,13 @@ test('runLogged redacts secret-looking command arguments in reports', async () =
   assert.doesNotMatch(JSON.stringify(report.command), /super-secret-token-value/);
   assert.match(JSON.stringify(report.command), /REDACTED/);
 });
+
+test('runLogged can stop hung commands with timeoutMs', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agent-runlog-timeout-'));
+  const { report, outDir } = await runLogged(process.execPath, ['-e', 'setTimeout(() => console.log("too late"), 1000)'], { cwd: dir, quiet: true, outDir: 'runs/timeout', timeoutMs: 50, timeoutKillAfterMs: 50 });
+  assert.equal(report.timedOut, true);
+  assert.equal(report.timeoutMs, 50);
+  assert.equal(report.analysis.status, 'failed');
+  assert.ok(report.analysis.findings.some(f => f.type === 'timeout'));
+  assert.match(readFileSync(join(outDir, 'report.md'), 'utf8'), /Timeout: 50ms \(hit\)/);
+});

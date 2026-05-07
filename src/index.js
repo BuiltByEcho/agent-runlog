@@ -22,11 +22,23 @@ export async function runLogged(command, args = [], options = {}) {
   const before = gitSnapshot(cwd);
   const stdoutChunks = [];
   const stderrChunks = [];
+  const timeoutMs = normalizeTimeoutMs(options.timeoutMs);
+  let timedOut = false;
+  let timeoutHandle;
+  let forceKillHandle;
   const child = spawn(command, args, {
     cwd,
     env: process.env,
     shell: options.shell ?? process.platform === 'win32'
   });
+
+  if (timeoutMs) {
+    timeoutHandle = setTimeout(() => {
+      timedOut = true;
+      child.kill(options.timeoutSignal || 'SIGTERM');
+      forceKillHandle = setTimeout(() => child.kill('SIGKILL'), options.timeoutKillAfterMs || 5000);
+    }, timeoutMs);
+  }
 
   child.stdout?.on('data', chunk => {
     stdoutChunks.push(chunk);
@@ -41,13 +53,15 @@ export async function runLogged(command, args = [], options = {}) {
     child.on('error', error => resolveExit({ code: 127, signal: null, error: error.message }));
     child.on('close', (code, signal) => resolveExit({ code, signal, error: null }));
   });
+  if (timeoutHandle) clearTimeout(timeoutHandle);
+  if (forceKillHandle) clearTimeout(forceKillHandle);
 
   const endedAt = new Date();
   const stdout = Buffer.concat(stdoutChunks).toString('utf8');
   const stderr = Buffer.concat(stderrChunks).toString('utf8');
   const after = gitSnapshot(cwd);
   const output = `${stdout}\n${stderr}`;
-  const analysis = analyzeOutput(output, exit.code, endedAt - startedAt);
+  const analysis = analyzeOutput(output, exit.code, endedAt - startedAt, { timedOut, timeoutMs });
   const redact = options.redact !== false;
   const stdoutRedaction = redact ? redactSecrets(stdout) : { text: stdout, redactions: [] };
   const stderrRedaction = redact ? redactSecrets(stderr) : { text: stderr, redactions: [] };
@@ -65,6 +79,8 @@ export async function runLogged(command, args = [], options = {}) {
     durationMs: endedAt - startedAt,
     exitCode: exit.code,
     signal: exit.signal,
+    timedOut,
+    timeoutMs: timeoutMs || null,
     spawnError: exit.error,
     git: { before, after },
     output: {
@@ -101,7 +117,7 @@ export function redactSecrets(text) {
   return { text: redacted, redactions };
 }
 
-export function analyzeOutput(text, exitCode = 0, durationMs = 0) {
+export function analyzeOutput(text, exitCode = 0, durationMs = 0, options = {}) {
   const findings = [];
   const safeText = redactSecrets(text).text;
   const lines = safeText.split(/\r?\n/).filter(Boolean);
@@ -113,13 +129,14 @@ export function analyzeOutput(text, exitCode = 0, durationMs = 0) {
     if (pattern.test(text)) findings.push({ severity: 'high', type: 'secret', message: `Output contains ${label}` });
     pattern.lastIndex = 0;
   }
-  if (exitCode !== 0) findings.push({ severity: 'medium', type: 'exit', message: `Command exited non-zero (${exitCode})` });
-  if (/\b(error|failed|exception|traceback|panic)\b/i.test(text)) findings.push({ severity: exitCode ? 'medium' : 'low', type: 'error-text', message: 'Output contains error/failure language' });
+  if (options.timedOut) findings.push({ severity: 'medium', type: 'timeout', message: `Command exceeded timeout (${formatDuration(options.timeoutMs || durationMs)})` });
+  if (exitCode !== 0 && exitCode !== null) findings.push({ severity: 'medium', type: 'exit', message: `Command exited non-zero (${exitCode})` });
+  if (/\b(error|failed|exception|traceback|panic)\b/i.test(text)) findings.push({ severity: exitCode || options.timedOut ? 'medium' : 'low', type: 'error-text', message: 'Output contains error/failure language' });
   if (durationMs > 10 * 60 * 1000) findings.push({ severity: 'low', type: 'duration', message: 'Run lasted over 10 minutes' });
   return {
-    status: exitCode === 0 ? 'success' : 'failed',
+    status: exitCode === 0 && !options.timedOut ? 'success' : 'failed',
     findings,
-    summary: summarize(lines, exitCode, findings)
+    summary: summarize(lines, exitCode, findings, options)
   };
 }
 
@@ -130,8 +147,10 @@ export function formatMarkdown(report) {
   lines.push('');
   lines.push(`- Command: \`${cmd}\``);
   lines.push(`- CWD: \`${report.cwd}\``);
-  lines.push(`- Status: **${report.analysis.status}** (exit ${report.exitCode})`);
+  const exitLabel = report.exitCode === null ? `signal ${report.signal || 'unknown'}` : `exit ${report.exitCode}`;
+  lines.push(`- Status: **${report.analysis.status}** (${exitLabel})`);
   lines.push(`- Duration: ${formatDuration(report.durationMs)}`);
+  if (report.timeoutMs) lines.push(`- Timeout: ${formatDuration(report.timeoutMs)}${report.timedOut ? ' (hit)' : ''}`);
   lines.push(`- Started: ${report.startedAt}`);
   lines.push(`- Stored logs redacted: ${report.output.storedRedacted ? 'yes' : 'no'}`);
   lines.push('');
@@ -201,9 +220,10 @@ function repeatedLines(lines) {
   return [...counts.entries()].filter(([, count]) => count >= 3).map(([line, count]) => ({ line, count })).sort((a, b) => b.count - a.count);
 }
 
-function summarize(lines, exitCode, findings) {
+function summarize(lines, exitCode, findings, options = {}) {
   const parts = [];
-  parts.push(exitCode === 0 ? 'Command completed successfully.' : `Command failed with exit code ${exitCode}.`);
+  if (options.timedOut) parts.push(`Command timed out after ${formatDuration(options.timeoutMs || 0)}.`);
+  else parts.push(exitCode === 0 ? 'Command completed successfully.' : `Command failed with exit code ${exitCode}.`);
   parts.push(`Captured ${lines.length} non-empty output line(s).`);
   const high = findings.filter(f => f.severity === 'high').length;
   const medium = findings.filter(f => f.severity === 'medium').length;
@@ -218,6 +238,13 @@ function tail(text, maxLines) {
 
 function timestampId(date) {
   return date.toISOString().replace(/[:.]/g, '-');
+}
+
+function normalizeTimeoutMs(value) {
+  if (value === undefined || value === null || value === false) return 0;
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) throw new Error('timeoutMs must be a positive number');
+  return Math.round(number);
 }
 
 function formatDuration(ms) {

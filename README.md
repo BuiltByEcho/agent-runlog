@@ -41,6 +41,7 @@ Options:
 - `--cwd DIR` — working directory for the command.
 - `--quiet` / `-q` — do not mirror child output to terminal.
 - `--json` — print the final report JSON to stdout.
+- `--timeout N` — stop hung commands after a duration like `30s`, `5m`, or `1h`.
 - `--no-redact` — store raw stdout/stderr instead of redacted logs.
 
 Examples:
@@ -49,6 +50,7 @@ Examples:
 agent-runlog -- npm test
 agent-runlog -o .agent-runs/lint -- npm run lint
 agent-runlog --json -- node scripts/migrate.js > run.json
+agent-runlog --timeout 5m -- npm test
 agent-runlog --no-redact -- node scripts/debug-local.js
 ```
 
@@ -63,6 +65,16 @@ This is useful for:
 - long-running CLI tasks
 - sub-agent harnesses
 - debugging repeated failure loops
+
+## Timeout guard
+
+Agents sometimes get stuck behind watch modes, stalled network calls, or tests that never settle. Add `--timeout` to turn those hangs into useful evidence instead of an endless wait:
+
+```bash
+agent-runlog --timeout 10m -- npm test
+```
+
+When the timeout is hit, `agent-runlog` sends `SIGTERM`, records `timedOut: true` and `timeoutMs` in `run.json`, marks the run as failed, and adds a timeout finding to `report.md`.
 
 ## Redaction by default
 
@@ -87,7 +99,7 @@ It is not a full secret scanner or observability platform. It is a tiny portable
 ```js
 import { runLogged } from 'agent-runlog';
 
-const { report, outDir } = await runLogged('npm', ['test']);
+const { report, outDir } = await runLogged('npm', ['test'], { timeoutMs: 5 * 60 * 1000 });
 
 // Preserve raw logs only when you really need them:
 await runLogged('node', ['debug.js'], { redact: false });
