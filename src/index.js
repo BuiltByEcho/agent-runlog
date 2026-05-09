@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
@@ -98,6 +98,7 @@ export async function runLogged(command, args = [], options = {}) {
   writeFileSync(join(outDir, 'stderr.log'), stderrForLogs);
   writeFileSync(join(outDir, 'run.json'), JSON.stringify(report, null, 2));
   writeFileSync(join(outDir, 'report.md'), formatMarkdown(report));
+  writeFileSync(join(outDir, 'handoff.md'), formatHandoffMarkdown(report, outDir));
 
   return { report, outDir };
 }
@@ -173,7 +174,7 @@ export function formatMarkdown(report) {
   lines.push('## Git state');
   lines.push(`- Before: ${report.git.before.branch || 'no git'} / ${report.git.before.status || 'unknown'}`);
   lines.push(`- After: ${report.git.after.branch || 'no git'} / ${report.git.after.status || 'unknown'}`);
-  if (report.git.after.diffStat) lines.push(`- Diffstat after run: ${report.git.after.diffStat}`);
+  if (report.git.after.diffStat) lines.push(`- Diffstat after run: ${summarizeDiffStat(report.git.after.diffStat)}`);
   lines.push('');
   lines.push('## Output tails');
   lines.push('### stdout');
@@ -189,6 +190,56 @@ export function formatMarkdown(report) {
   return lines.join('\n');
 }
 
+export function formatHandoffMarkdown(report, outDir = '') {
+  const cmd = report.command.map(shellQuote).join(' ');
+  const exitLabel = report.exitCode === null ? `signal ${report.signal || 'unknown'}` : `exit ${report.exitCode}`;
+  const findings = report.analysis.findings.slice(0, 5);
+  const lines = [];
+  lines.push(`## Agent Run Handoff: ${report.analysis.status}`);
+  lines.push('');
+  lines.push(`- Command: \`${cmd}\``);
+  lines.push(`- Result: ${report.analysis.status} (${exitLabel}, ${formatDuration(report.durationMs)})`);
+  if (report.timedOut) lines.push(`- Timeout: hit after ${formatDuration(report.timeoutMs || report.durationMs)}`);
+  lines.push(`- CWD: \`${report.cwd}\``);
+  if (outDir) {
+    lines.push(`- Evidence: \`${outDir}/report.md\`, \`${outDir}/run.json\`, \`${outDir}/stdout.log\`, \`${outDir}/stderr.log\``);
+  }
+  lines.push('');
+  lines.push('### Summary');
+  lines.push(report.analysis.summary);
+  lines.push('');
+  lines.push('### Findings');
+  if (findings.length) {
+    for (const finding of findings) lines.push(`- [${finding.severity}] ${finding.type}: ${finding.message}`);
+    if (report.analysis.findings.length > findings.length) lines.push(`- ${report.analysis.findings.length - findings.length} more finding(s) in the full report.`);
+  } else {
+    lines.push('- No obvious risk/loop/failure signals detected.');
+  }
+  lines.push('');
+  lines.push('### Git');
+  lines.push(`- Before: ${report.git.before.branch || 'no git'} / ${summarizeGitStatus(report.git.before.status)}`);
+  lines.push(`- After: ${report.git.after.branch || 'no git'} / ${summarizeGitStatus(report.git.after.status)}`);
+  if (report.git.after.diffStat) lines.push(`- Diffstat after run: ${summarizeDiffStat(report.git.after.diffStat)}`);
+  lines.push('');
+  lines.push('### Next');
+  if (report.analysis.status === 'success') {
+    lines.push('- Treat this run as passing evidence for the current change.');
+  } else if (report.timedOut) {
+    lines.push('- Inspect the output tails, then rerun with a longer timeout or disable watch/interactive mode.');
+  } else {
+    lines.push('- Inspect the output tails and fix the highest-severity finding before rerunning.');
+  }
+  lines.push('');
+  return lines.join('\n');
+}
+
+export function writeHandoffFiles(report, outDir, options = {}) {
+  const markdown = formatHandoffMarkdown(report, outDir);
+  if (options.handoffFile) writeFileSync(resolve(report.cwd, options.handoffFile), markdown);
+  if (options.githubSummaryFile) appendFileSync(resolve(report.cwd, options.githubSummaryFile), `${markdown}\n`);
+  return markdown;
+}
+
 function gitSnapshot(cwd) {
   if (!existsSync(join(cwd, '.git'))) return { branch: '', status: 'not a git repo', diffStat: '' };
   return {
@@ -196,6 +247,26 @@ function gitSnapshot(cwd) {
     status: git(cwd, ['status', '--short']) || 'clean',
     diffStat: git(cwd, ['diff', '--stat'])
   };
+}
+
+function summarizeGitStatus(status) {
+  if (!status) return 'unknown';
+  if (status === 'clean' || status === 'not a git repo') return status;
+  const lines = status.split(/\r?\n/).filter(Boolean);
+  if (lines.length === 1) return lines[0];
+  const staged = lines.filter(line => line[0] !== ' ' && line[0] !== '?').length;
+  const unstaged = lines.filter(line => line[1] && line[1] !== ' ').length;
+  const untracked = lines.filter(line => line.startsWith('??')).length;
+  const parts = [`${lines.length} changed file(s)`];
+  if (staged) parts.push(`${staged} staged`);
+  if (unstaged) parts.push(`${unstaged} unstaged`);
+  if (untracked) parts.push(`${untracked} untracked`);
+  return parts.join(', ');
+}
+
+function summarizeDiffStat(diffStat) {
+  const lines = diffStat.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  return lines.at(-1) || diffStat;
 }
 
 function git(cwd, args) {

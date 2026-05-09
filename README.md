@@ -13,6 +13,7 @@ npx agent-runlog -- npm test
 By default, logs go to `.agent-runs/<timestamp>/`:
 
 - `report.md` — human/agent readable summary
+- `handoff.md` — compact paste-ready summary for another agent, a PR comment, or CI step summary
 - `run.json` — structured report for automation
 - `stdout.log` — stdout, redacted by default
 - `stderr.log` — stderr, redacted by default
@@ -42,6 +43,8 @@ Options:
 - `--quiet` / `-q` — do not mirror child output to terminal.
 - `--json` — print the final report JSON to stdout.
 - `--timeout N` — stop hung commands after a duration like `30s`, `5m`, or `1h`.
+- `--handoff FILE` — also write the compact handoff summary to a specific file.
+- `--github-summary` — append the compact handoff to `$GITHUB_STEP_SUMMARY`.
 - `--no-redact` — store raw stdout/stderr instead of redacted logs.
 
 Examples:
@@ -51,6 +54,8 @@ agent-runlog -- npm test
 agent-runlog -o .agent-runs/lint -- npm run lint
 agent-runlog --json -- node scripts/migrate.js > run.json
 agent-runlog --timeout 5m -- npm test
+agent-runlog --handoff /tmp/test-handoff.md -- npm test
+GITHUB_STEP_SUMMARY="$GITHUB_STEP_SUMMARY" agent-runlog --github-summary -- npm test
 agent-runlog --no-redact -- node scripts/debug-local.js
 ```
 
@@ -75,6 +80,29 @@ agent-runlog --timeout 10m -- npm test
 ```
 
 When the timeout is hit, `agent-runlog` sends `SIGTERM`, records `timedOut: true` and `timeoutMs` in `run.json`, marks the run as failed, and adds a timeout finding to `report.md`.
+
+## Agent handoffs
+
+Every run now includes `handoff.md`, a shorter summary designed for the next agent or human who needs the result without reading a full transcript. It includes:
+
+- the command, status, duration, and working directory
+- links to the generated evidence files
+- the top findings
+- git state before/after the run
+- a suggested next step
+
+Use `--handoff FILE` when you want a stable summary path outside `.agent-runs/`, for example:
+
+```bash
+agent-runlog --handoff .agent-runs/latest-handoff.md -- npm test
+```
+
+In GitHub Actions, `--github-summary` appends the same compact summary to the job summary:
+
+```yaml
+- name: Test with run evidence
+  run: npx agent-runlog --github-summary -- npm test
+```
 
 ## Redaction by default
 

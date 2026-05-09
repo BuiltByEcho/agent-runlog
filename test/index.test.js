@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { analyzeOutput, redactSecrets, runLogged } from '../src/index.js';
+import { analyzeOutput, formatHandoffMarkdown, redactSecrets, runLogged, writeHandoffFiles } from '../src/index.js';
 
 test('analyzeOutput detects repeated lines and non-zero exits', () => {
   const text = ['looping forever', 'looping forever', 'looping forever', 'Error: nope'].join('\n');
@@ -20,6 +20,7 @@ test('runLogged writes report files', async () => {
   assert.equal(report.analysis.status, 'success');
   assert.ok(existsSync(join(outDir, 'report.md')));
   assert.ok(existsSync(join(outDir, 'run.json')));
+  assert.ok(existsSync(join(outDir, 'handoff.md')));
   assert.match(readFileSync(join(outDir, 'stdout.log'), 'utf8'), /ok/);
 });
 
@@ -86,4 +87,42 @@ test('runLogged can stop hung commands with timeoutMs', async () => {
   assert.equal(report.analysis.status, 'failed');
   assert.ok(report.analysis.findings.some(f => f.type === 'timeout'));
   assert.match(readFileSync(join(outDir, 'report.md'), 'utf8'), /Timeout: 50ms \(hit\)/);
+});
+
+test('formatHandoffMarkdown produces compact shareable run evidence', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agent-runlog-handoff-'));
+  const { report, outDir } = await runLogged(process.execPath, ['-e', 'console.log("handoff ok")'], { cwd: dir, quiet: true, outDir: 'runs/handoff' });
+  const handoff = formatHandoffMarkdown(report, outDir);
+  assert.match(handoff, /Agent Run Handoff: success/);
+  assert.match(handoff, /Evidence:/);
+  assert.match(handoff, /Treat this run as passing evidence/);
+  assert.match(readFileSync(join(outDir, 'handoff.md'), 'utf8'), /handoff/);
+});
+
+test('formatHandoffMarkdown keeps dirty git state compact', () => {
+  const report = {
+    command: ['npm', 'test'],
+    exitCode: 0,
+    signal: null,
+    durationMs: 1200,
+    timedOut: false,
+    cwd: '/tmp/example',
+    analysis: { status: 'success', summary: 'Command completed successfully.', findings: [] },
+    git: {
+      before: { branch: 'main', status: ' M README.md\n M src/index.js', diffStat: '' },
+      after: { branch: 'main', status: ' M README.md\n M src/index.js', diffStat: ' README.md | 2 +-\n src/index.js | 4 +++-\n 2 files changed, 4 insertions(+), 2 deletions(-)' }
+    }
+  };
+  const handoff = formatHandoffMarkdown(report, '/tmp/example/.agent-runs/demo');
+  assert.match(handoff, /2 changed file\(s\), 2 unstaged/);
+  assert.match(handoff, /2 files changed, 4 insertions\(\+\), 2 deletions\(-\)/);
+  assert.doesNotMatch(handoff, /\n M README\.md/);
+});
+
+test('writeHandoffFiles writes custom and GitHub summary files', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agent-runlog-handoff-files-'));
+  const { report, outDir } = await runLogged(process.execPath, ['-e', 'console.log("summary ok")'], { cwd: dir, quiet: true, outDir: 'runs/handoff-files' });
+  writeHandoffFiles(report, outDir, { handoffFile: 'custom-handoff.md', githubSummaryFile: 'github-summary.md' });
+  assert.match(readFileSync(join(dir, 'custom-handoff.md'), 'utf8'), /Agent Run Handoff: success/);
+  assert.match(readFileSync(join(dir, 'github-summary.md'), 'utf8'), /Agent Run Handoff: success/);
 });
