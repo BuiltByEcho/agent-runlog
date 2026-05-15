@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { analyzeOutput, formatHandoffMarkdown, redactSecrets, runLogged, writeHandoffFiles } from '../src/index.js';
 
 test('analyzeOutput detects repeated lines and non-zero exits', () => {
@@ -22,6 +23,25 @@ test('runLogged writes report files', async () => {
   assert.ok(existsSync(join(outDir, 'run.json')));
   assert.ok(existsSync(join(outDir, 'handoff.md')));
   assert.match(readFileSync(join(outDir, 'stdout.log'), 'utf8'), /ok/);
+});
+
+test('runLogged records changed git paths after command execution', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agent-runlog-git-files-'));
+  execFileSync('git', ['init'], { cwd: dir, stdio: 'ignore' });
+  execFileSync('git', ['config', 'user.name', 'Test Agent'], { cwd: dir });
+  execFileSync('git', ['config', 'user.email', 'agent@example.com'], { cwd: dir });
+  execFileSync(process.execPath, ['-e', 'require("node:fs").writeFileSync("README.md", "before\\n")'], { cwd: dir });
+  execFileSync('git', ['add', 'README.md'], { cwd: dir });
+  execFileSync('git', ['commit', '-m', 'init'], { cwd: dir, stdio: 'ignore' });
+
+  const { report, outDir } = await runLogged(process.execPath, ['-e', 'require("node:fs").appendFileSync("README.md", "after\\n"); require("node:fs").writeFileSync("new-file.txt", "new\\n")'], { cwd: dir, quiet: true, outDir: 'runs/git-files' });
+
+  assert.deepEqual(report.git.after.changedFiles, [
+    { status: 'modified', path: 'README.md' },
+    { status: 'untracked', path: 'new-file.txt' }
+  ]);
+  assert.match(readFileSync(join(outDir, 'report.md'), 'utf8'), /Changed files after run:/);
+  assert.match(readFileSync(join(outDir, 'handoff.md'), 'utf8'), /README\.md \(modified\), new-file\.txt \(untracked\)/);
 });
 
 test('secret-looking output is high severity', () => {

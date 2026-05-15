@@ -18,6 +18,8 @@ By default, logs go to `.agent-runs/<timestamp>/`:
 - `stdout.log` — stdout, redacted by default
 - `stderr.log` — stderr, redacted by default
 
+When run inside a git repository, the report includes the branch, compact status, diffstat, and changed paths after the command. That makes it easier to answer “what did this test/build/script touch?” from the handoff alone.
+
 ## Install
 
 ```bash
@@ -88,7 +90,7 @@ Every run now includes `handoff.md`, a shorter summary designed for the next age
 - the command, status, duration, and working directory
 - links to the generated evidence files
 - the top findings
-- git state before/after the run
+- git state before/after the run, including changed paths after the run
 - a suggested next step
 
 Use `--handoff FILE` when you want a stable summary path outside `.agent-runs/`, for example:

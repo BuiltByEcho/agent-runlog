@@ -175,6 +175,11 @@ export function formatMarkdown(report) {
   lines.push(`- Before: ${report.git.before.branch || 'no git'} / ${report.git.before.status || 'unknown'}`);
   lines.push(`- After: ${report.git.after.branch || 'no git'} / ${report.git.after.status || 'unknown'}`);
   if (report.git.after.diffStat) lines.push(`- Diffstat after run: ${summarizeDiffStat(report.git.after.diffStat)}`);
+  if (report.git.after.changedFiles?.length) {
+    lines.push('- Changed files after run:');
+    for (const file of report.git.after.changedFiles.slice(0, 20)) lines.push(`  - ${file.path} (${file.status})`);
+    if (report.git.after.changedFiles.length > 20) lines.push(`  - ... ${report.git.after.changedFiles.length - 20} more`);
+  }
   lines.push('');
   lines.push('## Output tails');
   lines.push('### stdout');
@@ -220,6 +225,7 @@ export function formatHandoffMarkdown(report, outDir = '') {
   lines.push(`- Before: ${report.git.before.branch || 'no git'} / ${summarizeGitStatus(report.git.before.status)}`);
   lines.push(`- After: ${report.git.after.branch || 'no git'} / ${summarizeGitStatus(report.git.after.status)}`);
   if (report.git.after.diffStat) lines.push(`- Diffstat after run: ${summarizeDiffStat(report.git.after.diffStat)}`);
+  if (report.git.after.changedFiles?.length) lines.push(`- Changed files after run: ${summarizeChangedFiles(report.git.after.changedFiles)}`);
   lines.push('');
   lines.push('### Next');
   if (report.analysis.status === 'success') {
@@ -241,11 +247,13 @@ export function writeHandoffFiles(report, outDir, options = {}) {
 }
 
 function gitSnapshot(cwd) {
-  if (!existsSync(join(cwd, '.git'))) return { branch: '', status: 'not a git repo', diffStat: '' };
+  if (!existsSync(join(cwd, '.git'))) return { branch: '', status: 'not a git repo', diffStat: '', changedFiles: [] };
+  const status = git(cwd, ['status', '--short']) || 'clean';
   return {
     branch: git(cwd, ['branch', '--show-current']),
-    status: git(cwd, ['status', '--short']) || 'clean',
-    diffStat: git(cwd, ['diff', '--stat'])
+    status,
+    diffStat: git(cwd, ['diff', '--stat']),
+    changedFiles: parseGitStatus(status)
   };
 }
 
@@ -267,6 +275,43 @@ function summarizeGitStatus(status) {
 function summarizeDiffStat(diffStat) {
   const lines = diffStat.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
   return lines.at(-1) || diffStat;
+}
+
+function summarizeChangedFiles(files, limit = 6) {
+  const shown = files.slice(0, limit).map(file => `${file.path} (${file.status})`);
+  if (files.length > limit) shown.push(`... ${files.length - limit} more`);
+  return shown.join(', ');
+}
+
+function parseGitStatus(status) {
+  if (!status || status === 'clean' || status === 'not a git repo') return [];
+  return status.split(/\r?\n/)
+    .filter(Boolean)
+    .map(line => {
+      const match = line.match(/^(.{1,2})\s+(.+)$/);
+      const rawStatus = match ? match[1] : line.slice(0, 2);
+      const pathText = (match ? match[2] : line.slice(2)).trim();
+      const [from, to] = pathText.includes(' -> ') ? pathText.split(' -> ') : ['', pathText];
+      const entry = { status: normalizeGitStatus(rawStatus), path: to || pathText };
+      if (from) entry.previousPath = from;
+      return entry;
+    });
+}
+
+function normalizeGitStatus(rawStatus) {
+  if (rawStatus === '??') return 'untracked';
+  if (rawStatus === '!!') return 'ignored';
+  const labels = {
+    A: 'added',
+    C: 'copied',
+    D: 'deleted',
+    M: 'modified',
+    R: 'renamed',
+    T: 'type-changed',
+    U: 'unmerged'
+  };
+  const codes = [...new Set(rawStatus.trim().split('').filter(Boolean))];
+  return codes.map(code => labels[code] || code).join('+') || rawStatus.trim();
 }
 
 function git(cwd, args) {
