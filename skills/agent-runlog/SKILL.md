@@ -12,9 +12,9 @@ Use `agent-runlog` when command output needs to be preserved and summarized for 
 From the project root:
 
 ```bash
-npx agent-runlog -- npm test
-npx agent-runlog -- npm run lint
-npx agent-runlog -- npm run build
+npx @builtbyecho/agent-runlog -- npm test
+npx @builtbyecho/agent-runlog -- npm run lint
+npx @builtbyecho/agent-runlog -- npm run build
 ```
 
 Then inspect:
@@ -26,7 +26,7 @@ cat .agent-runs/*/report.md | tail -n 120
 For automation:
 
 ```bash
-npx agent-runlog --json -- npm test > run.json
+npx @builtbyecho/agent-runlog --json -- npm test > run.json
 ```
 
 ## When to use
@@ -45,8 +45,8 @@ npx agent-runlog --json -- npm test > run.json
 ## Useful commands
 
 ```bash
-npx agent-runlog -- <command> [args...]
-npx agent-runlog -o .agent-runs/lint -- npm run lint
-npx agent-runlog --cwd ./subproject -- npm test
-npx agent-runlog --quiet -- npm test
+npx @builtbyecho/agent-runlog -- <command> [args...]
+npx @builtbyecho/agent-runlog -o .agent-runs/lint -- npm run lint
+npx @builtbyecho/agent-runlog --cwd ./subproject -- npm test
+npx @builtbyecho/agent-runlog --quiet -- npm test
 ```

@@ -5,7 +5,7 @@ Wrap any command and save a concise, safety-aware run log for agents.
 AI agents do a lot of work through shell commands, test runs, linters, build scripts, and sub-agent CLIs. When something goes wrong, the transcript is usually messy and the useful evidence is buried. `agent-runlog` gives every run a small audit trail: command, duration, exit code, output tails, git state, and simple risk/loop/failure signals.
 
 ```bash
-npx agent-runlog -- npm test
+npx @builtbyecho/agent-runlog -- npm test
 ```
 
 ## What it writes
@@ -23,13 +23,13 @@ When run inside a git repository, the report includes the branch, compact status
 ## Install
 
 ```bash
-npm install -g agent-runlog
+npm install -g @builtbyecho/agent-runlog
 ```
 
 Or run without installing:
 
 ```bash
-npx agent-runlog -- npm test
+npx @builtbyecho/agent-runlog -- npm test
 ```
 
 ## Usage
@@ -103,7 +103,7 @@ In GitHub Actions, `--github-summary` appends the same compact summary to the jo
 
 ```yaml
 - name: Test with run evidence
-  run: npx agent-runlog --github-summary -- npm test
+  run: npx @builtbyecho/agent-runlog --github-summary -- npm test
 ```
 
 ## Redaction by default
@@ -127,7 +127,7 @@ It is not a full secret scanner or observability platform. It is a tiny portable
 ## Library API
 
 ```js
-import { runLogged } from 'agent-runlog';
+import { runLogged } from '@builtbyecho/agent-runlog';
 
 const { report, outDir } = await runLogged('npm', ['test'], { timeoutMs: 5 * 60 * 1000 });
 
@@ -143,3 +143,7 @@ MIT
 ## Agent Skill
 
 This package includes an OpenClaw/Claude-style skill at `skills/agent-runlog` that teaches agents when and how to wrap commands with `agent-runlog` for redacted run evidence and handoffs.
+
+## Package Names
+
+`@builtbyecho/agent-runlog` is the canonical package. The older unscoped `agent-runlog` package remains on npm as a compatibility package for historical installs.
