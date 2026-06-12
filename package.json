@@ -1,6 +1,6 @@
 {
   "name": "@builtbyecho/agent-runlog",
-  "version": "0.4.2",
+  "version": "0.4.4",
   "description": "Wrap agent commands and produce concise, safety-aware run logs.",
   "type": "module",
   "bin": {

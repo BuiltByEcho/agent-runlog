@@ -12,6 +12,8 @@ const SECRET_PATTERNS = [
   [/\bBearer\s+[A-Za-z0-9._~+/-]{20,}=*\b/g, 'Bearer token']
 ];
 
+const SEVERITY_RANK = { low: 1, medium: 2, high: 3 };
+
 export async function runLogged(command, args = [], options = {}) {
   const cwd = resolve(options.cwd || process.cwd());
   const startedAt = new Date();
@@ -62,6 +64,8 @@ export async function runLogged(command, args = [], options = {}) {
   const after = gitSnapshot(cwd);
   const output = `${stdout}\n${stderr}`;
   const analysis = analyzeOutput(output, exit.code, endedAt - startedAt, { timedOut, timeoutMs });
+  const policy = evaluatePolicy(analysis.findings, options.failOnSeverity);
+  if (policy.violated && analysis.status === 'success') analysis.status = 'failed';
   const redact = options.redact !== false;
   const stdoutRedaction = redact ? redactSecrets(stdout) : { text: stdout, redactions: [] };
   const stderrRedaction = redact ? redactSecrets(stderr) : { text: stderr, redactions: [] };
@@ -91,7 +95,8 @@ export async function runLogged(command, args = [], options = {}) {
       stdoutTail: tail(stdoutForLogs, 80),
       stderrTail: tail(stderrForLogs, 80)
     },
-    analysis
+    analysis,
+    policy
   };
 
   writeFileSync(join(outDir, 'stdout.log'), stdoutForLogs);
@@ -141,6 +146,23 @@ export function analyzeOutput(text, exitCode = 0, durationMs = 0, options = {}) 
   };
 }
 
+export function evaluatePolicy(findings = [], failOnSeverity) {
+  if (!failOnSeverity) return { failOnSeverity: null, violated: false, matchedFindings: [] };
+  const normalized = String(failOnSeverity).toLowerCase();
+  const threshold = SEVERITY_RANK[normalized];
+  if (!threshold) throw new Error(`Invalid failOnSeverity: ${failOnSeverity}`);
+  const matchedFindings = findings.filter(finding => SEVERITY_RANK[finding.severity] >= threshold);
+  return {
+    failOnSeverity: normalized,
+    violated: matchedFindings.length > 0,
+    matchedFindings: matchedFindings.map(finding => ({
+      severity: finding.severity,
+      type: finding.type,
+      message: finding.message
+    }))
+  };
+}
+
 export function formatMarkdown(report) {
   const cmd = report.command.map(shellQuote).join(' ');
   const lines = [];
@@ -152,6 +174,7 @@ export function formatMarkdown(report) {
   lines.push(`- Status: **${report.analysis.status}** (${exitLabel})`);
   lines.push(`- Duration: ${formatDuration(report.durationMs)}`);
   if (report.timeoutMs) lines.push(`- Timeout: ${formatDuration(report.timeoutMs)}${report.timedOut ? ' (hit)' : ''}`);
+  if (report.policy?.failOnSeverity) lines.push(`- Finding gate: ${report.policy.failOnSeverity}${report.policy.violated ? ' (violated)' : ' (passed)'}`);
   lines.push(`- Started: ${report.startedAt}`);
   lines.push(`- Stored logs redacted: ${report.output.storedRedacted ? 'yes' : 'no'}`);
   lines.push('');
@@ -171,6 +194,11 @@ export function formatMarkdown(report) {
     lines.push('- No obvious risk/loop/failure signals detected.');
   }
   lines.push('');
+  if (report.policy?.violated) {
+    lines.push('## Finding gate');
+    lines.push(`The \`${report.policy.failOnSeverity}\` gate was violated by ${report.policy.matchedFindings.length} finding(s).`);
+    lines.push('');
+  }
   lines.push('## Git state');
   lines.push(`- Before: ${report.git.before.branch || 'no git'} / ${report.git.before.status || 'unknown'}`);
   lines.push(`- After: ${report.git.after.branch || 'no git'} / ${report.git.after.status || 'unknown'}`);
@@ -205,6 +233,7 @@ export function formatHandoffMarkdown(report, outDir = '') {
   lines.push(`- Command: \`${cmd}\``);
   lines.push(`- Result: ${report.analysis.status} (${exitLabel}, ${formatDuration(report.durationMs)})`);
   if (report.timedOut) lines.push(`- Timeout: hit after ${formatDuration(report.timeoutMs || report.durationMs)}`);
+  if (report.policy?.failOnSeverity) lines.push(`- Finding gate: ${report.policy.failOnSeverity}${report.policy.violated ? ' (violated)' : ' (passed)'}`);
   lines.push(`- CWD: \`${report.cwd}\``);
   if (outDir) {
     lines.push(`- Evidence: \`${outDir}/report.md\`, \`${outDir}/run.json\`, \`${outDir}/stdout.log\`, \`${outDir}/stderr.log\``);
@@ -230,6 +259,8 @@ export function formatHandoffMarkdown(report, outDir = '') {
   lines.push('### Next');
   if (report.analysis.status === 'success') {
     lines.push('- Treat this run as passing evidence for the current change.');
+  } else if (report.policy?.violated) {
+    lines.push('- Inspect the policy-matching findings before treating this run as safe to share or merge.');
   } else if (report.timedOut) {
     lines.push('- Inspect the output tails, then rerun with a longer timeout or disable watch/interactive mode.');
   } else {

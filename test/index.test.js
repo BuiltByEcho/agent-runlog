@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { execFileSync } from 'node:child_process';
-import { analyzeOutput, formatHandoffMarkdown, redactSecrets, runLogged, writeHandoffFiles } from '../src/index.js';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { analyzeOutput, evaluatePolicy, formatHandoffMarkdown, redactSecrets, runLogged, writeHandoffFiles } from '../src/index.js';
 
 test('analyzeOutput detects repeated lines and non-zero exits', () => {
   const text = ['looping forever', 'looping forever', 'looping forever', 'Error: nope'].join('\n');
@@ -47,6 +47,47 @@ test('runLogged records changed git paths after command execution', async () => 
 test('secret-looking output is high severity', () => {
   const analysis = analyzeOutput('API_TOKEN="super-secret-token-value"', 0, 10);
   assert.ok(analysis.findings.some(f => f.severity === 'high' && f.type === 'secret'));
+});
+
+test('evaluatePolicy matches findings at or above the selected severity', () => {
+  const policy = evaluatePolicy([
+    { severity: 'low', type: 'error-text', message: 'Output contains error/failure language' },
+    { severity: 'high', type: 'secret', message: 'Output contains GitHub token' }
+  ], 'medium');
+  assert.equal(policy.failOnSeverity, 'medium');
+  assert.equal(policy.violated, true);
+  assert.deepEqual(policy.matchedFindings.map(f => f.type), ['secret']);
+});
+
+test('runLogged marks successful commands failed when the finding gate is violated', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agent-runlog-policy-'));
+  const secret = 'API_TOKEN="super-secret-token-value"';
+  const { report, outDir } = await runLogged(process.execPath, ['-e', `console.log(${JSON.stringify(secret)})`], { cwd: dir, quiet: true, outDir: 'runs/policy', failOnSeverity: 'high' });
+  assert.equal(report.exitCode, 0);
+  assert.equal(report.analysis.status, 'failed');
+  assert.equal(report.policy.violated, true);
+  assert.equal(report.policy.failOnSeverity, 'high');
+  assert.match(readFileSync(join(outDir, 'report.md'), 'utf8'), /Finding gate: high \(violated\)/);
+  assert.match(readFileSync(join(outDir, 'handoff.md'), 'utf8'), /Inspect the policy-matching findings/);
+});
+
+test('CLI --fail-on exits non-zero for policy violations even when command succeeds', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agent-runlog-cli-policy-'));
+  const result = spawnSync(process.execPath, [
+    new URL('../src/cli.js', import.meta.url).pathname,
+    '--cwd',
+    dir,
+    '--quiet',
+    '--fail-on',
+    'high',
+    '--',
+    process.execPath,
+    '-e',
+    'console.log("API_TOKEN=\\"super-secret-token-value\\"")'
+  ], { encoding: 'utf8' });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /agent-runlog: wrote/);
 });
 
 

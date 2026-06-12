@@ -29,6 +29,15 @@ For automation:
 npx @builtbyecho/agent-runlog --json -- npm test > run.json
 ```
 
+For CI gates or safety-sensitive handoffs:
+
+```bash
+npx @builtbyecho/agent-runlog --fail-on high -- npm test
+npx @builtbyecho/agent-runlog --fail-on medium -- npm run build
+```
+
+`--fail-on` makes the wrapper exit non-zero when findings at or above the selected severity are detected, even if the wrapped command itself exits 0. Use `high` to block obvious secret leaks; use `medium` when timeouts, non-zero exits, or repeated failure loops should also block the handoff.
+
 ## When to use
 
 - Long or flaky test/build/lint runs.
@@ -49,4 +58,5 @@ npx @builtbyecho/agent-runlog -- <command> [args...]
 npx @builtbyecho/agent-runlog -o .agent-runs/lint -- npm run lint
 npx @builtbyecho/agent-runlog --cwd ./subproject -- npm test
 npx @builtbyecho/agent-runlog --quiet -- npm test
+npx @builtbyecho/agent-runlog --fail-on high -- npm test
 ```
