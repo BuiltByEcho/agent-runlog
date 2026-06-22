@@ -1,6 +1,6 @@
 {
-  "name": "@builtbyecho/agent-runlog",
-  "version": "0.4.5",
+  "name": "agent-runlog",
+  "version": "0.4.1",
   "description": "Wrap agent commands and produce concise, safety-aware run logs.",
   "type": "module",
   "bin": {
@@ -32,7 +32,8 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/BuiltByEcho/agent-runlog.git"
+    "url": "git+https://github.com/BuiltByEcho/agent-runlog.git",
+    "directory": "packages/agent-runlog"
   },
   "bugs": {
     "url": "https://github.com/BuiltByEcho/agent-runlog/issues"
@@ -40,5 +41,8 @@
   "homepage": "https://github.com/BuiltByEcho/agent-runlog#readme",
   "engines": {
     "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

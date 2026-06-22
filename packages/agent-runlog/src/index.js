@@ -12,8 +12,6 @@ const SECRET_PATTERNS = [
   [/\bBearer\s+[A-Za-z0-9._~+/-]{20,}=*\b/g, 'Bearer token']
 ];
 
-const SEVERITY_RANK = { low: 1, medium: 2, high: 3 };
-
 export async function runLogged(command, args = [], options = {}) {
   const cwd = resolve(options.cwd || process.cwd());
   const startedAt = new Date();
@@ -31,7 +29,7 @@ export async function runLogged(command, args = [], options = {}) {
   const child = spawn(command, args, {
     cwd,
     env: process.env,
-    shell: options.shell ?? false
+    shell: options.shell ?? process.platform === 'win32'
   });
 
   if (timeoutMs) {
@@ -64,8 +62,6 @@ export async function runLogged(command, args = [], options = {}) {
   const after = gitSnapshot(cwd);
   const output = `${stdout}\n${stderr}`;
   const analysis = analyzeOutput(output, exit.code, endedAt - startedAt, { timedOut, timeoutMs });
-  const policy = evaluatePolicy(analysis.findings, options.failOnSeverity);
-  if (policy.violated && analysis.status === 'success') analysis.status = 'failed';
   const redact = options.redact !== false;
   const stdoutRedaction = redact ? redactSecrets(stdout) : { text: stdout, redactions: [] };
   const stderrRedaction = redact ? redactSecrets(stderr) : { text: stderr, redactions: [] };
@@ -95,8 +91,7 @@ export async function runLogged(command, args = [], options = {}) {
       stdoutTail: tail(stdoutForLogs, 80),
       stderrTail: tail(stderrForLogs, 80)
     },
-    analysis,
-    policy
+    analysis
   };
 
   writeFileSync(join(outDir, 'stdout.log'), stdoutForLogs);
@@ -146,23 +141,6 @@ export function analyzeOutput(text, exitCode = 0, durationMs = 0, options = {}) 
   };
 }
 
-export function evaluatePolicy(findings = [], failOnSeverity) {
-  if (!failOnSeverity) return { failOnSeverity: null, violated: false, matchedFindings: [] };
-  const normalized = String(failOnSeverity).toLowerCase();
-  const threshold = SEVERITY_RANK[normalized];
-  if (!threshold) throw new Error(`Invalid failOnSeverity: ${failOnSeverity}`);
-  const matchedFindings = findings.filter(finding => SEVERITY_RANK[finding.severity] >= threshold);
-  return {
-    failOnSeverity: normalized,
-    violated: matchedFindings.length > 0,
-    matchedFindings: matchedFindings.map(finding => ({
-      severity: finding.severity,
-      type: finding.type,
-      message: finding.message
-    }))
-  };
-}
-
 export function formatMarkdown(report) {
   const cmd = report.command.map(shellQuote).join(' ');
   const lines = [];
@@ -174,7 +152,6 @@ export function formatMarkdown(report) {
   lines.push(`- Status: **${report.analysis.status}** (${exitLabel})`);
   lines.push(`- Duration: ${formatDuration(report.durationMs)}`);
   if (report.timeoutMs) lines.push(`- Timeout: ${formatDuration(report.timeoutMs)}${report.timedOut ? ' (hit)' : ''}`);
-  if (report.policy?.failOnSeverity) lines.push(`- Finding gate: ${report.policy.failOnSeverity}${report.policy.violated ? ' (violated)' : ' (passed)'}`);
   lines.push(`- Started: ${report.startedAt}`);
   lines.push(`- Stored logs redacted: ${report.output.storedRedacted ? 'yes' : 'no'}`);
   lines.push('');
@@ -194,20 +171,10 @@ export function formatMarkdown(report) {
     lines.push('- No obvious risk/loop/failure signals detected.');
   }
   lines.push('');
-  if (report.policy?.violated) {
-    lines.push('## Finding gate');
-    lines.push(`The \`${report.policy.failOnSeverity}\` gate was violated by ${report.policy.matchedFindings.length} finding(s).`);
-    lines.push('');
-  }
   lines.push('## Git state');
   lines.push(`- Before: ${report.git.before.branch || 'no git'} / ${report.git.before.status || 'unknown'}`);
   lines.push(`- After: ${report.git.after.branch || 'no git'} / ${report.git.after.status || 'unknown'}`);
   if (report.git.after.diffStat) lines.push(`- Diffstat after run: ${summarizeDiffStat(report.git.after.diffStat)}`);
-  if (report.git.after.changedFiles?.length) {
-    lines.push('- Changed files after run:');
-    for (const file of report.git.after.changedFiles.slice(0, 20)) lines.push(`  - ${file.path} (${file.status})`);
-    if (report.git.after.changedFiles.length > 20) lines.push(`  - ... ${report.git.after.changedFiles.length - 20} more`);
-  }
   lines.push('');
   lines.push('## Output tails');
   lines.push('### stdout');
@@ -233,7 +200,6 @@ export function formatHandoffMarkdown(report, outDir = '') {
   lines.push(`- Command: \`${cmd}\``);
   lines.push(`- Result: ${report.analysis.status} (${exitLabel}, ${formatDuration(report.durationMs)})`);
   if (report.timedOut) lines.push(`- Timeout: hit after ${formatDuration(report.timeoutMs || report.durationMs)}`);
-  if (report.policy?.failOnSeverity) lines.push(`- Finding gate: ${report.policy.failOnSeverity}${report.policy.violated ? ' (violated)' : ' (passed)'}`);
   lines.push(`- CWD: \`${report.cwd}\``);
   if (outDir) {
     lines.push(`- Evidence: \`${outDir}/report.md\`, \`${outDir}/run.json\`, \`${outDir}/stdout.log\`, \`${outDir}/stderr.log\``);
@@ -254,13 +220,10 @@ export function formatHandoffMarkdown(report, outDir = '') {
   lines.push(`- Before: ${report.git.before.branch || 'no git'} / ${summarizeGitStatus(report.git.before.status)}`);
   lines.push(`- After: ${report.git.after.branch || 'no git'} / ${summarizeGitStatus(report.git.after.status)}`);
   if (report.git.after.diffStat) lines.push(`- Diffstat after run: ${summarizeDiffStat(report.git.after.diffStat)}`);
-  if (report.git.after.changedFiles?.length) lines.push(`- Changed files after run: ${summarizeChangedFiles(report.git.after.changedFiles)}`);
   lines.push('');
   lines.push('### Next');
   if (report.analysis.status === 'success') {
     lines.push('- Treat this run as passing evidence for the current change.');
-  } else if (report.policy?.violated) {
-    lines.push('- Inspect the policy-matching findings before treating this run as safe to share or merge.');
   } else if (report.timedOut) {
     lines.push('- Inspect the output tails, then rerun with a longer timeout or disable watch/interactive mode.');
   } else {
@@ -278,13 +241,11 @@ export function writeHandoffFiles(report, outDir, options = {}) {
 }
 
 function gitSnapshot(cwd) {
-  if (!existsSync(join(cwd, '.git'))) return { branch: '', status: 'not a git repo', diffStat: '', changedFiles: [] };
-  const status = git(cwd, ['status', '--short']) || 'clean';
+  if (!existsSync(join(cwd, '.git'))) return { branch: '', status: 'not a git repo', diffStat: '' };
   return {
     branch: git(cwd, ['branch', '--show-current']),
-    status,
-    diffStat: git(cwd, ['diff', '--stat']),
-    changedFiles: parseGitStatus(status)
+    status: git(cwd, ['status', '--short']) || 'clean',
+    diffStat: git(cwd, ['diff', '--stat'])
   };
 }
 
@@ -306,43 +267,6 @@ function summarizeGitStatus(status) {
 function summarizeDiffStat(diffStat) {
   const lines = diffStat.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
   return lines.at(-1) || diffStat;
-}
-
-function summarizeChangedFiles(files, limit = 6) {
-  const shown = files.slice(0, limit).map(file => `${file.path} (${file.status})`);
-  if (files.length > limit) shown.push(`... ${files.length - limit} more`);
-  return shown.join(', ');
-}
-
-function parseGitStatus(status) {
-  if (!status || status === 'clean' || status === 'not a git repo') return [];
-  return status.split(/\r?\n/)
-    .filter(Boolean)
-    .map(line => {
-      const match = line.match(/^(.{1,2})\s+(.+)$/);
-      const rawStatus = match ? match[1] : line.slice(0, 2);
-      const pathText = (match ? match[2] : line.slice(2)).trim();
-      const [from, to] = pathText.includes(' -> ') ? pathText.split(' -> ') : ['', pathText];
-      const entry = { status: normalizeGitStatus(rawStatus), path: to || pathText };
-      if (from) entry.previousPath = from;
-      return entry;
-    });
-}
-
-function normalizeGitStatus(rawStatus) {
-  if (rawStatus === '??') return 'untracked';
-  if (rawStatus === '!!') return 'ignored';
-  const labels = {
-    A: 'added',
-    C: 'copied',
-    D: 'deleted',
-    M: 'modified',
-    R: 'renamed',
-    T: 'type-changed',
-    U: 'unmerged'
-  };
-  const codes = [...new Set(rawStatus.trim().split('').filter(Boolean))];
-  return codes.map(code => labels[code] || code).join('+') || rawStatus.trim();
 }
 
 function git(cwd, args) {

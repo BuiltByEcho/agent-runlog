@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { analyzeOutput, evaluatePolicy, formatHandoffMarkdown, redactSecrets, runLogged, writeHandoffFiles } from '../src/index.js';
 
 test('analyzeOutput detects repeated lines and non-zero exits', () => {
@@ -74,7 +75,7 @@ test('runLogged marks successful commands failed when the finding gate is violat
 test('CLI --fail-on exits non-zero for policy violations even when command succeeds', () => {
   const dir = mkdtempSync(join(tmpdir(), 'agent-runlog-cli-policy-'));
   const result = spawnSync(process.execPath, [
-    new URL('../src/cli.js', import.meta.url).pathname,
+    fileURLToPath(new URL('../src/cli.js', import.meta.url)),
     '--cwd',
     dir,
     '--quiet',
