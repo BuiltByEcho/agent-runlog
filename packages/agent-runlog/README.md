@@ -18,6 +18,20 @@ By default, logs go to `.agent-runs/<timestamp>/`:
 - `stdout.log` — stdout, redacted by default
 - `stderr.log` — stderr, redacted by default
 
+## Fits in the Echo agent toolchain
+
+Use `agent-runlog` after `agent-brief` and `git-digest`: run the command, keep the evidence, and hand the result to a human, CI job, or another agent without dumping a whole terminal transcript.
+
+This is the receipts layer for Echo builds: tests, smokes, failed deploys, and long-running agent commands all leave a small redacted trail.
+
+## Refresh smoke
+
+```bash
+npm test
+npm run smoke
+npm pack --dry-run --json
+```
+
 ## Install
 
 ```bash
