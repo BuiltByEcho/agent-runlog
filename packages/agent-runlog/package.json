@@ -1,6 +1,6 @@
 {
   "name": "agent-runlog",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Wrap agent commands and produce concise, safety-aware run logs.",
   "type": "module",
   "bin": {
