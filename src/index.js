@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
@@ -104,8 +105,20 @@ export async function runLogged(command, args = [], options = {}) {
   writeFileSync(join(outDir, 'run.json'), JSON.stringify(report, null, 2));
   writeFileSync(join(outDir, 'report.md'), formatMarkdown(report));
   writeFileSync(join(outDir, 'handoff.md'), formatHandoffMarkdown(report, outDir));
+  writeFileSync(join(outDir, 'manifest.json'), `${JSON.stringify(createEvidenceManifest(outDir), null, 2)}\n`);
 
   return { report, outDir };
+}
+
+export function createEvidenceManifest(outDir) {
+  const paths = ['handoff.md', 'report.md', 'run.json', 'stderr.log', 'stdout.log'];
+  return {
+    algorithm: 'sha256',
+    files: paths.map(path => {
+      const bytes = readFileSync(join(outDir, path));
+      return { path, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
+    })
+  };
 }
 
 export function redactSecrets(text) {

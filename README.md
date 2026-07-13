@@ -17,6 +17,7 @@ By default, logs go to `.agent-runs/<timestamp>/`:
 - `run.json` — structured report for automation
 - `stdout.log` — stdout, redacted by default
 - `stderr.log` — stderr, redacted by default
+- `manifest.json` — SHA-256 digest and byte count for every evidence file, so copied or archived run receipts can be verified
 
 When run inside a git repository, the report includes the branch, compact status, diffstat, and changed paths after the command. That makes it easier to answer “what did this test/build/script touch?” from the handoff alone.
 

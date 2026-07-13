@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 import { analyzeOutput, evaluatePolicy, formatHandoffMarkdown, redactSecrets, runLogged, writeHandoffFiles } from '../src/index.js';
 
 test('analyzeOutput detects repeated lines and non-zero exits', () => {
@@ -23,7 +24,13 @@ test('runLogged writes report files', async () => {
   assert.ok(existsSync(join(outDir, 'report.md')));
   assert.ok(existsSync(join(outDir, 'run.json')));
   assert.ok(existsSync(join(outDir, 'handoff.md')));
+  assert.ok(existsSync(join(outDir, 'manifest.json')));
   assert.match(readFileSync(join(outDir, 'stdout.log'), 'utf8'), /ok/);
+  const manifest = JSON.parse(readFileSync(join(outDir, 'manifest.json'), 'utf8'));
+  assert.equal(manifest.algorithm, 'sha256');
+  assert.deepEqual(manifest.files.map(file => file.path), ['handoff.md', 'report.md', 'run.json', 'stderr.log', 'stdout.log']);
+  const reportBytes = readFileSync(join(outDir, 'report.md'));
+  assert.equal(manifest.files.find(file => file.path === 'report.md').sha256, createHash('sha256').update(reportBytes).digest('hex'));
 });
 
 test('runLogged records changed git paths after command execution', async () => {
